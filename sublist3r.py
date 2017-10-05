@@ -94,6 +94,7 @@ def parse_args():
     parser.add_argument('-d', '--domain', help="Domain name to enumerate it's subdomains", required=True)
     parser.add_argument('-b', '--bruteforce', help='Enable the subbrute bruteforce module', nargs='?', default=False)
     parser.add_argument('-p', '--ports', help='Scan the found subdomains against specified tcp ports')
+    parser.add_argument('-T', '--takeover', help='Subdomain takeover check by looking for different DNS resolutions and responses', nargs='?', default=False)
     parser.add_argument('-v', '--verbose', help='Enable Verbosity and display results in realtime', nargs='?', default=False)
     parser.add_argument('-t', '--threads', help='Number of threads to use for subbrute bruteforce', type=int, default=30)
     parser.add_argument('-e', '--engines', help='Specify a comma-separated list of search engines')
@@ -296,8 +297,8 @@ class GoogleEnum(enumratorBaseThreaded):
 
     def check_response_errors(self, resp):
         if 'Our systems have detected unusual traffic' in resp:
-            self.print_(R + "[!] Error: Google probably now is blocking our requests" + W)
-            self.print_(R + "[~] Finished now the Google Enumeration ..." + W)
+            self.print_(R + "[!] Error: Google is probably blocking our requests" + W)
+            self.print_(R + "[~] Finished with Google Enumeration ..." + W)
             return False
         return True
 
@@ -855,8 +856,49 @@ class portscan():
             t = threading.Thread(target=self.port_scan, args=(subdomain, self.ports))
             t.start()
 
+class SubdomainTakeover():
+    def __init__(self, domain, subdomains, threads):
+        self.domain = domain
+        self.subdomains = subdomains
+        self.threads = threads
+        self.lock = threading.BoundedSemaphore(value=self.threads)
 
-def main(domain, threads, savefile, ports, silent, verbose, enable_bruteforce, engines):
+    def scan(self, domain, subdomain):
+        headers = {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36',
+                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                  'Accept-Language': 'en-US,en;q=0.8',
+                  'Accept-Encoding': 'gzip',
+        }
+        self.lock.acquire()
+        try:
+            fqdn = socket.getfqdn(subdomain)
+            if not fqdn.endswith(domain):
+                try:
+                    r = requests.get('http://' + subdomain, headers=headers, timeout=1)
+                    if r.status_code == 404:
+                        print("%sFound possible takeover: %s%s:[80]%s -> %s%s%s [%s]" % (R, G, subdomain, W, Y, fqdn, W, r.status_code))
+                except:
+                    try:
+                        r = requests.get('https://' + subdomain, headers=headers, timeout=1)
+                        if r.status_code == 404:
+                            print("%sFound possible takeover: %s%s:[443]%s -> %s%s%s [%s]" % (R, G, subdomain, W, Y, fqdn, W, r.status_code))
+                    except:
+                        print("%sFound possible takeover: %s%s%s -> %s%s%s [timeout]" % (R, G, subdomain, W, Y, fqdn, W))
+        except Exception:
+            pass
+        self.lock.release()
+
+    def run(self):
+        queue = []
+        for subdomain in self.subdomains:
+            queue.append(threading.Thread(target=self.scan, args=(self.domain, subdomain)))
+        for t in queue:
+            t.start()
+        for t in queue:
+            t.join()
+
+def main(domain, threads, savefile, ports, takeover, silent, verbose, enable_bruteforce, engines):
     bruteforce_list = set()
     search_list = set()
 
@@ -947,6 +989,12 @@ def main(domain, threads, savefile, ports, silent, verbose, enable_bruteforce, e
 
         if not silent:
             print(Y + "[-] Total Unique Subdomains Found: %s" % len(subdomains) + W)
+			
+        if takeover:
+            if not silent:
+                print(G + '[-] Starting Subdomain Takeover Lookup..')
+            tscan = SubdomainTakeover(parsed_domain.netloc, subdomains, threads)
+            tscan.run()
 
         if ports:
             if not silent:
@@ -967,10 +1015,13 @@ if __name__ == "__main__":
     threads = args.threads
     savefile = args.output
     ports = args.ports
+    takeover = args.takeover
     enable_bruteforce = args.bruteforce
     verbose = args.verbose
     engines = args.engines
+    if takeover or takeover is None:
+        takeover = True
     if verbose or verbose is None:
         verbose = True
     banner()
-    res = main(domain, threads, savefile, ports, silent=False, verbose=verbose, enable_bruteforce=enable_bruteforce, engines=engines)
+    res = main(domain, threads, savefile, ports, takeover, silent=False, verbose=verbose, enable_bruteforce=enable_bruteforce, engines=engines)
