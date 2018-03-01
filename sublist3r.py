@@ -875,7 +875,7 @@ class SubdomainTakeover():
             fqdn = socket.getfqdn(subdomain)
             if not fqdn.endswith(domain):
                 try:
-                    r = requests.get('http://' + subdomain, headers=headers, timeout=1)
+                    r = requests.get('http://' + subdomain, headers=headers, timeout=10)
                     if r.status_code == 404:
                         print("%sFound possible takeover: %s%s:[80]%s -> %s%s%s [%s]" % (R, G, subdomain, W, Y, fqdn, W, r.status_code))
                 except:
